@@ -50,12 +50,14 @@ export async function handler(event) {
 	const cacheKey = `url:${targetUrl}`;
 
 	if (await redis.exists(cacheKey)) {
+		console.log("Started working with redis");
 		handleCached(cacheKey, receiptHandle, CURRENT_QUEUE_URL, nextQueueFullUrl, parsedBody);
 		console.log("Handled cached key: ", cacheKey);
 		return;
 	}
 
 	const html = await fetchHTML(targetUrl);
+	console.log("Fethched html");
 	if (!html) {
 		await deleteMessage(receiptHandle, CURRENT_QUEUE_URL);
 		console.log("Not html");
@@ -63,12 +65,16 @@ export async function handler(event) {
 	}
 
 	const $ = cheerio.load(html);
+	console.log("Loaded html");
 
 	const nextDepthLinks = extractLinks($, targetUrl, currentDepth, maxDepth, clientGuid);
+	console.log("Extracted links");
 
 	const isMatch = isTextFound($, searchText);
+	console.log("Matched test");
 
 	await cache(cacheKey, nextDepthLinks, isMatch);
+	console.log("Finished caching");
 
 	if(isMatch) {
 		await reportToServer(clientGuid, targetUrl, currentDepth, pagesCrawled, nextDepthLinks);
@@ -76,13 +82,17 @@ export async function handler(event) {
 	}
 
 	await createQueue(queueName);
+	console.log("Create new queue");
+
 	await sendMessages(
 		nextDepthLinks,
 		parsedBody,
 		nextQueueFullUrl
 	);
+	console.log("Sent messages");
 
 	await deleteMessage(receiptHandle, CURRENT_QUEUE_URL);
+	console.log("Deleted message");
 
 	await deleteIfQueueEmpty(CURRENT_QUEUE_URL);
 }
@@ -175,6 +185,7 @@ function extractLinks($, baseUrl, currentDepth, maxDepth) {
 }
 
 async function cache(cacheKey, nextDepthLinks, isMatch) {
+	console.log("Started chaching");
 	await redis.set(cacheKey, isMatch ? "match" : "no-match", "EX", 86400);
 
 	if(nextDepthLinks.length > 0) {
