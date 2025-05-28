@@ -60,7 +60,7 @@ export async function handler(event) {
 
 	if (await redis.exists(cacheKey)) {
 		console.log("Started working with redis");
-		handleCached(cacheKey, receiptHandle, CURRENT_QUEUE_URL, nextQueueFullUrl, parsedBody);
+		await handleCached(cacheKey, receiptHandle, CURRENT_QUEUE_URL, nextQueueFullUrl, parsedBody);
 		console.log("Handled cached key: ", cacheKey);
 		return;
 	}
