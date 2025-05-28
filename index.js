@@ -15,6 +15,7 @@ const redis = new Redis({
   port: Number(process.env.REDIS_PORT),
   connectTimeout: 1000,
   commandTimeout: 1000,
+  tls: {}
 });
 
 
