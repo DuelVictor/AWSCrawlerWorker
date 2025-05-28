@@ -16,14 +16,16 @@ const redis = new Redis({
   connectTimeout: 1000,
   commandTimeout: 1000,
 });
-redis.ping().then(res => console.log("Redis ping response:", res))
-  .catch(err => console.error("Redis ping error:", err));
-redis.on("error", err => console.error("Redis error:", err));
+
 
 const EC2_REPORT_URL = process.env.EC2_REPORT_URL;
 
 export async function handler(event) {
 	console.log("Lambda invoked with event:", JSON.stringify(event));
+
+	redis.ping().then(res => console.log("Redis ping response:", res))
+  		.catch(err => console.error("Redis ping error:", err));
+	redis.on("error", err => console.error("Redis error:", err));
 
 	if (!event.Records?.length) {
 		console.log("No records, exiting.");
