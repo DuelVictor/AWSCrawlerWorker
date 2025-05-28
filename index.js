@@ -1,10 +1,8 @@
 import * as cheerio from "cheerio";
 import {
 	SQSClient,
-	ReceiveMessageCommand,
 	DeleteMessageCommand,
 	SendMessageBatchCommand,
-	GetQueueUrlCommand,
 	CreateQueueCommand,
 	GetQueueAttributesCommand,
 	DeleteQueueCommand,
@@ -26,16 +24,9 @@ export async function handler(event) {
 		return;
 	}
 
-	const { eventSourceARN } = event.Records[0];
-	const {CURRENT_QUEUE_URL, nextQueueUrl} = getQueueUrlFromArn(eventSourceARN);
-	const result = await receiveMessagePayload(CURRENT_QUEUE_URL);
-
-	if(!result.message)
-		return;
-
-	const { message, parsedBody } = result;
-
-	if (!message) return;
+	const { eventSourceARN, receiptHandle, body } = event.Records[0];
+	const {CURRENT_QUEUE_URL, nextQueueUrl, queueName} = getQueueUrlFromArn(eventSourceARN);
+	const parsedBody = JSON.parse(body);
 
 	console.log("Parsed body: ", parsedBody);
 
@@ -51,7 +42,7 @@ export async function handler(event) {
 	console.log("Next queue: ", nextQueueUrl);
 
 	if (currentDepth > maxDepth || pagesCrawled >= maxPages) {
-		await deleteMessage(message, CURRENT_QUEUE_URL);
+		await deleteMessage(receiptHandle, CURRENT_QUEUE_URL);
 		console.log("Deleted message, going too deep");
 		return;
 	}
@@ -59,14 +50,14 @@ export async function handler(event) {
 	const cacheKey = `url:${targetUrl}`;
 
 	if (await redis.exists(cacheKey)) {
-		handleCached(cacheKey, message, CURRENT_QUEUE_URL, nextQueueFullUrl, parsedBody);
+		handleCached(cacheKey, receiptHandle, CURRENT_QUEUE_URL, nextQueueFullUrl, parsedBody);
 		console.log("Handled cached key: ", cacheKey);
 		return;
 	}
 
 	const html = await fetchHTML(targetUrl);
 	if (!html) {
-		await deleteMessage(message, CURRENT_QUEUE_URL);
+		await deleteMessage(receiptHandle, CURRENT_QUEUE_URL);
 		console.log("Not html");
 		return;
 	}
@@ -84,14 +75,14 @@ export async function handler(event) {
 		console.log("Reported back to server");
 	}
 
-	await ensureQueueExists(nextQueueFullUrl);
+	await createQueue(queueName);
 	await sendMessages(
 		nextDepthLinks,
 		parsedBody,
 		nextQueueFullUrl
 	);
 
-	await deleteMessage(message, CURRENT_QUEUE_URL);
+	await deleteMessage(receiptHandle, CURRENT_QUEUE_URL);
 
 	await deleteIfQueueEmpty(CURRENT_QUEUE_URL);
 }
@@ -103,57 +94,31 @@ function getQueueUrlFromArn(arn) {
 
 	console.log(`Current url: ${CURRENT_QUEUE_URL} \n Next url: ${nextQueueUrl}`);
 
-	return { CURRENT_QUEUE_URL, nextQueueUrl };
+	return { CURRENT_QUEUE_URL, nextQueueUrl, queueName };
 }
 
-async function receiveMessagePayload(CURRENT_QUEUE_URL) {
-	const receiveMessagePayload = {
-		QueueUrl: CURRENT_QUEUE_URL,
-		MaxNumberOfMessages: 1,
-		VisibilityTimeout: 30,
-		WaitTimeSeconds: 10,
-	};
-
-	const data = await sqsClient.send(new ReceiveMessageCommand(receiveMessagePayload));
-
-	console.log("Data from payload: ", data);
-
-	if (!data.Messages || data.Messages.length === 0) return;
-
-	const message = data.Messages[0];
-	const parsedBody = JSON.parse(message.Body);
-	return { message, parsedBody };
+async function createQueue(queueName) {
+	console.log(`Creating new queue: ${queueName}`);
+	await sqsClient.send(new CreateQueueCommand({
+		QueueName: queueName,
+		Attributes: {
+			VisibilityTimeout: "30",
+			MessageRetentionPeriod: "1200",
+		}
+	}));
 }
 
-async function ensureQueueExists(queueName) {
-	const QueueName = `${queueName}`;
-
-	try {
-		await sqsClient.send(new GetQueueUrlCommand({ QueueName }));
-		console.log(`Queue ${QueueName} already exists`);
-	} catch (error) {
-		console.log(`Creating new queue: ${QueueName}`);
-		await sqsClient.send(new CreateQueueCommand({
-			QueueName,
-			Attributes: {
-				VisibilityTimeout: "30",
-				MessageRetentionPeriod: "1200",
-			}
-		}));
-	}
-}
-
-async function deleteMessage(message, queueUrl) {
-	if (!message.ReceiptHandle) return;
+async function deleteMessage(receiptHandle, queueUrl) {
+	if (!receiptHandle) return;
 	await sqsClient.send(
 		new DeleteMessageCommand({
 			QueueUrl: queueUrl,
-			ReceiptHandle: message.ReceiptHandle,
+			ReceiptHandle: receiptHandle,
 		})
 	);
 }
 
-async function handleCached(cacheKey, message, CURRENT_QUEUE_URL, nextQueueUrl, parsedBody) {
+async function handleCached(cacheKey, receiptHandle, CURRENT_QUEUE_URL, nextQueueUrl, parsedBody) {
 	const nextDepthLinks = await redis.smembers(`${cacheKey}:links`);
 
 	await reportToServer(
@@ -162,13 +127,9 @@ async function handleCached(cacheKey, message, CURRENT_QUEUE_URL, nextQueueUrl, 
 		parsedBody.currentDepth,
 		parsedBody.pagesCrawled,
 		nextDepthLinks);
-	await deleteMessage(message, CURRENT_QUEUE_URL);
-	await ensureQueueExists(nextQueueUrl);
-	await sendMessages(
-		nextDepthLinks,
-		parsedBody,
-		nextQueueUrl
-	);
+	await deleteMessage(receiptHandle, CURRENT_QUEUE_URL);
+	await createQueue(nextQueueUrl);
+	await sendMessages(nextDepthLinks, parsedBody, nextQueueUrl);
 }
 
 async function reportToServer(clientGuid, targetUrl, currentDepth, pagesCrawled, nextDepthLinks) {
@@ -247,8 +208,7 @@ async function sendMessages(nextDepthLinks, parsedBody, nextQueueUrl) {
 		}));
 		for (let i = 0; i < entries.length; i += 10) {
 			const batch = entries.slice(i, i + 10);
-			await sqsClient.send(
-			new SendMessageBatchCommand({
+			await sqsClient.send(new SendMessageBatchCommand({
 				QueueUrl: nextQueueUrl,
 				Entries: batch,
 			}));
