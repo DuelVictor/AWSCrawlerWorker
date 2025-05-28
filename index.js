@@ -116,7 +116,7 @@ async function createQueue(queueName) {
 	await sqsClient.send(new CreateQueueCommand({
 		QueueName: queueName,
 		Attributes: {
-			VisibilityTimeout: "30",
+			VisibilityTimeout: "600",
 			MessageRetentionPeriod: "1200",
 		}
 	}));
