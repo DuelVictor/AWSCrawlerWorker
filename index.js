@@ -87,7 +87,6 @@ export async function handler(event) {
 
 	if (isMatch) {
 		await reportToServer(clientGuid, targetUrl, currentDepth, pagesCrawled, nextDepthLinks);
-		console.log("Reported back to server: ", EC2_REPORT_URL);
 	}
 
 	await createQueue(queueName);
@@ -152,6 +151,7 @@ async function handleCached(cacheKey, receiptHandle, CURRENT_QUEUE_URL, nextQueu
 }
 
 async function reportToServer(clientGuid, targetUrl, currentDepth, pagesCrawled, nextDepthLinks) {
+	console.log("Reporting back to server: ", EC2_REPORT_URL);
 	try {
 		await fetch(`${EC2_REPORT_URL}/newCrawl`, {
 			method: "POST",
