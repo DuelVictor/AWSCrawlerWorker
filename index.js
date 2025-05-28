@@ -11,13 +11,12 @@ import Redis from "ioredis";
 
 const sqsClient = new SQSClient({ region: "eu-west-1" });
 const redis = new Redis({
-  host: process.env.REDIS_HOST,
-  port: Number(process.env.REDIS_PORT),
-  connectTimeout: 1000,
-  commandTimeout: 1000,
-  tls: {}
+	host: process.env.REDIS_HOST,
+	port: Number(process.env.REDIS_PORT),
+	connectTimeout: 1000,
+	commandTimeout: 1000,
+	tls: {}
 });
-
 
 const EC2_REPORT_URL = process.env.EC2_REPORT_URL;
 
@@ -25,7 +24,7 @@ export async function handler(event) {
 	console.log("Lambda invoked with event:", JSON.stringify(event));
 
 	redis.ping().then(res => console.log("Redis ping response:", res))
-  		.catch(err => console.error("Redis ping error:", err));
+		.catch(err => console.error("Redis ping error:", err));
 	redis.on("error", err => console.error("Redis error:", err));
 
 	if (!event.Records?.length) {
@@ -34,20 +33,21 @@ export async function handler(event) {
 	}
 
 	const { eventSourceARN, receiptHandle, body } = event.Records[0];
-	const {CURRENT_QUEUE_URL, nextQueueUrl, queueName} = getQueueUrlFromArn(eventSourceARN);
+	const { CURRENT_QUEUE_URL, nextQueueUrl } = getQueueUrlFromArn(eventSourceARN);
 	const parsedBody = JSON.parse(body);
 
 	console.log("Parsed body: ", parsedBody);
 
 	const { targetUrl,
 		currentDepth,
-		pagesCrawled, 
+		pagesCrawled,
 		clientGuid,
-		maxDepth, 
-		maxPages, 
+		maxDepth,
+		maxPages,
 		searchText } = parsedBody;
 
-	const nextQueueFullUrl = `${nextQueueUrl}/${clientGuid}-depth-${currentDepth + 1}-queue`;
+	const queueName = `${clientGuid}-depth-${currentDepth + 1}-queue`;
+	const nextQueueFullUrl = `${nextQueueUrl}/${queueName}`;
 	console.log("Next queue: ", nextQueueUrl);
 
 	if (currentDepth > maxDepth || pagesCrawled >= maxPages) {
@@ -85,9 +85,9 @@ export async function handler(event) {
 	await cache(cacheKey, nextDepthLinks, isMatch);
 	console.log("Finished caching");
 
-	if(isMatch) {
+	if (isMatch) {
 		await reportToServer(clientGuid, targetUrl, currentDepth, pagesCrawled, nextDepthLinks);
-		console.log("Reported back to server");
+		console.log("Reported back to server: ", EC2_REPORT_URL);
 	}
 
 	await createQueue(queueName);
@@ -113,7 +113,7 @@ function getQueueUrlFromArn(arn) {
 
 	console.log(`Current url: ${CURRENT_QUEUE_URL} \n Next url: ${nextQueueUrl}`);
 
-	return { CURRENT_QUEUE_URL, nextQueueUrl, queueName };
+	return { CURRENT_QUEUE_URL, nextQueueUrl };
 }
 
 async function createQueue(queueName) {
@@ -152,13 +152,17 @@ async function handleCached(cacheKey, receiptHandle, CURRENT_QUEUE_URL, nextQueu
 }
 
 async function reportToServer(clientGuid, targetUrl, currentDepth, pagesCrawled, nextDepthLinks) {
-	await fetch(`${EC2_REPORT_URL}/newCrawl`, {
-		method: "POST",
-		headers: {
-			"Content-Type": "application/json",
-		},
-		body: JSON.stringify({ clientGuid, targetUrl, currentDepth, pagesCrawled, nextDepthLinks }),
-	});
+	try {
+		await fetch(`${EC2_REPORT_URL}/newCrawl`, {
+			method: "POST",
+			headers: {
+				"Content-Type": "application/json",
+			},
+			body: JSON.stringify({ clientGuid, targetUrl, currentDepth, pagesCrawled, nextDepthLinks }),
+		});
+	} catch (error) {
+		console.error(error);
+	}
 }
 
 async function fetchHTML(url) {
@@ -197,8 +201,8 @@ async function cache(cacheKey, nextDepthLinks, isMatch) {
 	console.log("Started chaching");
 	await redis.set(cacheKey, isMatch ? "match" : "no-match", "EX", 86400);
 
-	if(nextDepthLinks.length > 0) {
-		const linksKey = `${cacheKey}:links`
+	if (nextDepthLinks.length > 0) {
+		const linksKey = `${cacheKey}:links`;
 		await redis.sadd(linksKey, ...nextDepthLinks);
 		await redis.expire(linksKey, 86400);
 	}
@@ -213,7 +217,7 @@ function isTextFound($, searchText) {
 
 async function sendMessages(nextDepthLinks, parsedBody, nextQueueUrl) {
 	const { currentDepth, pagesCrawled, clientGuid, maxDepth, maxPages, searchText } = parsedBody;
-	if(currentDepth < maxDepth) {
+	if (currentDepth < maxDepth) {
 		const baseBody = {
 			currentDepth: currentDepth + 1,
 			pagesCrawled: pagesCrawled + 1,
@@ -221,7 +225,7 @@ async function sendMessages(nextDepthLinks, parsedBody, nextQueueUrl) {
 			maxDepth,
 			maxPages,
 			searchText,
-		}
+		};
 		const entries = nextDepthLinks.map((targetUrl, index) => ({
 			Id: `${index}`,
 			MessageBody: JSON.stringify({ targetUrl, ...baseBody })
