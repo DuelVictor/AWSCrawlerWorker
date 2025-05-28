@@ -11,9 +11,13 @@ import Redis from "ioredis";
 
 const sqsClient = new SQSClient({ region: "eu-west-1" });
 const redis = new Redis({
-	host: process.env.REDIS_HOST,
-	port: Number(process.env.REDIS_PORT),
+  host: process.env.REDIS_HOST,
+  port: Number(process.env.REDIS_PORT),
+  connectTimeout: 1000,
+  commandTimeout: 1000,
 });
+redis.on("error", err => console.error("Redis error:", err));
+
 const EC2_REPORT_URL = process.env.EC2_REPORT_URL;
 
 export async function handler(event) {
